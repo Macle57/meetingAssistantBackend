@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "esprima": "^4.0.1",
+    "pocketbase": "^0.25.1",
     "puppeteer": "^24.2.0",
     "puppeteer-stream": "^3.0.19"
   }

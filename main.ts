@@ -1,10 +1,22 @@
 import fs from "node:fs";
 import { launch, getStream } from "puppeteer-stream";
+import "jsr:@std/dotenv/load";
+import { PassThrough } from "node:stream";
+import { Buffer } from "node:buffer";
 
+import PocketBase from "pocketbase";
+
+const pb = new PocketBase("https://meets.pockethost.io");
+const authData = await pb
+  .collection("users")
+  .authWithPassword( Deno.env.get("DB_EMAIL"), Deno.env.get("DB_PASS"));
 let screenshotInterval;
 
-const LINK = "https://us04web.zoom.us/j/72940511606?pwd=qwmaeCk8LOirv0ZJbMLkPuCAU9AjNP.1";
+const LINK =
+  "https://us04web.zoom.us/j/75056537915?pwd=AcbdyWdP0PapJoDsaDYjoUUtgTqM9B.1";
 const zoomMeetingLink = LINK + "#success";
+
+console.log( " 🚀 Starting the meeting 🚀 \n with the link: " + zoomMeetingLink);
 
 // Utility function to wait for a given time (in milliseconds)
 function waitforme(millisec) {
@@ -27,7 +39,6 @@ async function captureFrame(iframe, count) {
 // Ensure required directories exist
 function prepareDirectories() {
   if (!fs.existsSync("screenshots")) fs.mkdirSync("screenshots");
-  if (!fs.existsSync("audio")) fs.mkdirSync("audio");
 }
 
 // Create a write stream for audio recording
@@ -161,19 +172,90 @@ function startScreenshotCapture(joinedIframe) {
 }
 
 // Start audio recording from the page using puppeteer-stream
-async function startAudioRecording(page, file) {
+import { PassThrough } from "stream";
+
+async function startAudioRecording(page) {
+  let audioChunks = [];
   const stream = await getStream(page, { audio: true, video: false });
-  stream.pipe(file);
-  return (async () => {
+  const passThrough = new PassThrough();
+
+  stream.pipe(passThrough);
+
+  passThrough.on("data", (chunk) => {
+    audioChunks.push(chunk);
+  });
+
+  return async () => {
+    // Clean up streams
     stream.destroy();
-    file.close();
-    console.log("audio recording done");
-  })
+    passThrough.destroy();
+
+    // Combine all chunks into a single Buffer
+    const audioBuffer = Buffer.concat(audioChunks);
+    // console.log("Audio buffer:", audioBuffer);
+    // console.log("Audio chunks:", audioChunks);
+
+    try {
+      // Send to Cloudflare Whisper API
+      console.log("Transcribing audio...");
+      const response = await run("@cf/openai/whisper-tiny-en", audioBuffer);
+
+      // Log the full response
+      console.log("Full:", {
+        result: {
+          text: response.result.text,
+          word_count: response.result.word_count,
+          vtt: response.result.vtt,
+          words: response.result.words,
+        },
+        success: response.success,
+        errors: response.errors,
+        messages: response.messages,
+      });
+
+      // Log just the transcription
+      console.log("Transcription:", response.result.text);
+
+      // Clear the chunks array for next recording
+      audioChunks = [];
+
+      console.log("Audio recording and transcription completed");
+
+      // Return the full result object instead of just the text
+      return {
+        text: response.result.text,
+        word_count: response.result.word_count,
+        vtt: response.result.vtt,
+        words: response.result.words,
+      };
+    } catch (error) {
+      console.error("Error during transcription:", error);
+      audioChunks = [];
+      throw error;
+    }
+  };
+}
+
+
+async function run(model, input) {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${Deno.env.get(
+      "ACCOUNT_KEY"
+    )}/ai/run/${model}`,
+    {
+      headers: { Authorization: `Bearer ${Deno.env.get("BEARER_TOKEN")}` },
+      method: "POST",
+      body: input,
+    }
+  );
+  const result = await response.json();
+  return result;
 }
 
 // Main function to coordinate the entire process
 (async () => {
   try {
+    console.log(" Initializing Storage ");
     prepareDirectories();
     const file = createAudioFile();
     const { browser, context, page } = await setupBrowser();
@@ -182,7 +264,9 @@ async function startAudioRecording(page, file) {
 
     const joinedIframe = await joinZoomMeeting(page, zoomMeetingLink);
 
+    console.log(" 📸 Analyzing frames ");
     startScreenshotCapture(joinedIframe);
+    console.log(" 📸 Analyzing audio ");
     const audiocleanup = await startAudioRecording(page, file);
 
     //Cleanup logic
@@ -190,8 +274,9 @@ async function startAudioRecording(page, file) {
     await audiocleanup();
     clearInterval(screenshotInterval);
     try{
-      page.close();
-      browser.close();
+      console.log("Closing browser");
+      // page.close();
+      // browser.close();
     }
     catch(e){
       // console.log("error closing browser");
