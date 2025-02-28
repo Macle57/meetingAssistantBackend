@@ -10,13 +10,8 @@ const pb = new PocketBase("https://meets.pockethost.io");
 const authData = await pb
   .collection("users")
   .authWithPassword( Deno.env.get("DB_EMAIL"), Deno.env.get("DB_PASS"));
-let screenshotInterval;
 
-const LINK =
-  "https://us04web.zoom.us/j/75056537915?pwd=AcbdyWdP0PapJoDsaDYjoUUtgTqM9B.1";
-const zoomMeetingLink = LINK + "#success";
 
-console.log( " 🚀 Starting the meeting 🚀 \n with the link: " + zoomMeetingLink);
 
 // Utility function to wait for a given time (in milliseconds)
 function waitforme(millisec) {
@@ -41,12 +36,6 @@ function prepareDirectories() {
   if (!fs.existsSync("screenshots")) fs.mkdirSync("screenshots");
 }
 
-// Create a write stream for audio recording
-function createAudioFile() {
-  return fs.createWriteStream("audio/" + 0 + ".webm", {
-    highWaterMark: 1024,
-  });
-}
 
 // Launch browser instance with desired settings
 async function setupBrowser() {
@@ -152,7 +141,7 @@ function startScreenshotCapture(joinedIframe) {
     console.log("mic pop-up missed");
   });
   let frameCount = 0;
-  screenshotInterval = setInterval(async () => {
+  const screenshotInterval = setInterval(async () => {
     try {
       await joinedIframe
         ?.locator(
@@ -169,10 +158,11 @@ function startScreenshotCapture(joinedIframe) {
       // console.error("not sharing screen currently");
     }
   }, 4000);
+  return screenshotInterval;
 }
 
 // Start audio recording from the page using puppeteer-stream
-import { PassThrough } from "stream";
+
 
 async function startAudioRecording(page) {
   let audioChunks = [];
@@ -201,17 +191,7 @@ async function startAudioRecording(page) {
       const response = await run("@cf/openai/whisper-tiny-en", audioBuffer);
 
       // Log the full response
-      console.log("Full:", {
-        result: {
-          text: response.result.text,
-          word_count: response.result.word_count,
-          vtt: response.result.vtt,
-          words: response.result.words,
-        },
-        success: response.success,
-        errors: response.errors,
-        messages: response.messages,
-      });
+      console.log("Full:", response);
 
       // Log just the transcription
       console.log("Transcription:", response.result.text);
@@ -253,11 +233,15 @@ async function run(model, input) {
 }
 
 // Main function to coordinate the entire process
-(async () => {
+const analyze = async (zoomMeetingLink: string, meetid: string ) => {
   try {
+    zoomMeetingLink += "#success";
+    console.log(
+      " 🚀 Starting the meeting 🚀 \n with the link: " + zoomMeetingLink
+    );
+
+
     console.log(" Initializing Storage ");
-    prepareDirectories();
-    const file = createAudioFile();
     const { browser, context, page } = await setupBrowser();
 
     await overridePermissions(context, page);
@@ -265,14 +249,20 @@ async function run(model, input) {
     const joinedIframe = await joinZoomMeeting(page, zoomMeetingLink);
 
     console.log(" 📸 Analyzing frames ");
-    startScreenshotCapture(joinedIframe);
+    const screenshotInterval = startScreenshotCapture(joinedIframe);
     console.log(" 📸 Analyzing audio ");
-    const audiocleanup = await startAudioRecording(page, file);
+    const audiocleanup = await startAudioRecording(page);
 
     //Cleanup logic
     await joinedIframe?.locator("::-p-text(This meeting has been ended by host)").setTimeout(0).hover();
-    await audiocleanup();
-    clearInterval(screenshotInterval);
+    const { text } = await audiocleanup();
+    pb.collection('meets').update(meetid, {
+      "url": zoomMeetingLink,
+      "dialogue_transcript": text,
+    })
+
+    clearInterval(screenshotInterval)
+
     try{
       console.log("Closing browser");
       // page.close();
@@ -287,4 +277,15 @@ async function run(model, input) {
   } finally {
     // Cleanup can be performed here if needed.
   }
-})();
+};
+
+pb.collection("meets").subscribe(
+  "*",
+  function (e) {
+    if (e.action === "create") {
+      analyze(e.record.url, e.record.id);
+    }
+  }
+);
+setTimeout(() => {}, -1);
+ 
