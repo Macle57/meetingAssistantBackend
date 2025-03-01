@@ -22,6 +22,7 @@ pb.collection("users")
 const keyHandlers: Record<string, () => void> = {
   p: () => console.log("P pressed"),
   q: () => Deno.exit(),
+  t: () => console.log("T pressed"),
   "\u0003": () => Deno.exit(), // Ctrl+C
 };
 
@@ -67,7 +68,7 @@ function prepareDirectories() {
 // Launch browser instance with desired settings
 async function setupBrowser() {
   const browser = await launch({
-    // headless: "new",
+    headless: "new",
     args: [],
     executablePath:
       "C:\\Users\\adity\\.cache\\puppeteer\\chrome\\win64-133.0.6943.53\\chrome-win64\\chrome.exe",
@@ -169,12 +170,7 @@ async function leaveMeeting(joinedIframe: Frame, joinedFrame: ElementHandle) {
   await waitforme(100);
   joinedIframe.locator(
     "#wc-footer > div.footer__inner.leave-option-container > div:nth-child(2) > div > div > button"
-  ).click().then(()=>{
-    console.log("Successfully left meeting");
-  })
-  .catch(()=>{
-    console.log("Failed to leave meeting");
-  });
+  ).click();
 
   await waitforme(1600);
 
@@ -197,6 +193,10 @@ async function leaveMeeting(joinedIframe: Frame, joinedFrame: ElementHandle) {
   
 }
 
+async function debuggerFunc(joinedFrame: ElementHandle, joinedIframe: Frame, page: Page) {
+  console.log("debugger");
+}
+  
 // Start the screenshot capture interval
 function startScreenshotCapture(joinedIframe: Frame) {
   joinedIframe.locator(
@@ -326,6 +326,10 @@ const analyze = async (zoomMeetingLink: string, meetid: string) => {
     keyHandlers["l"]=()=>{
       leaveMeeting(joinedIframe, joinedFrame);
     };
+
+    keyHandlers["t"]=()=>{
+      debuggerFunc(joinedFrame, joinedIframe, page);
+    }
 
     const meetEnders = [joinedIframe.locator("::-p-text(This meeting has been ended by host)").setTimeout(0).hover(),
     page.locator("::-p-text(How was your experience?)").setTimeout(0).hover(),
